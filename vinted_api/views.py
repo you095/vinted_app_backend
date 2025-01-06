@@ -2,14 +2,18 @@ from django.shortcuts import render
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
-from .serializers import ProductImageSerializer, compress_image, CategorySerializer, ProductSerializer
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from .serializers import ProductImageSerializer, compress_image, CategorySerializer, ProductSerializer, ConditionSerializer
 from vinted_backend.authentication.authentication import IsVintedAuthenticated
-from .models import User, ProductImage, Category
+from .models import User, ProductImage, Category, Condition
 from rest_framework import status
+from django.conf import settings
 import traceback
+import logging
 import json
 
+
+logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 @permission_classes([IsVintedAuthenticated])
@@ -22,7 +26,7 @@ def get_categories(request):
 # Create your views here.
 @api_view(['POST'])
 @permission_classes([IsVintedAuthenticated])
-@parser_classes([MultiPartParser, FormParser])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
 def upload_product_images(request):
     try:
         user = request.user
@@ -175,56 +179,57 @@ def register_user(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+import json
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+
 @api_view(['POST'])
 @permission_classes([IsVintedAuthenticated])
 @parser_classes([MultiPartParser, FormParser])
 def create_product(request):
     try:
-        user = request.user
-        print("Creating product for user:", user.id)
-        
-        # Create the product
-        serializer = ProductSerializer(data=request.data, context={'request': request})
+        # Deserialize the JSON payload in the 'data' key
+        raw_data = request.data.get('data')
+        if raw_data:
+            parsed_data = json.loads(raw_data)  # Parse the JSON string into a dictionary
+        else:
+            return Response({"error": "No product data provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Handle product creation
+        serializer = ProductSerializer(data=parsed_data, context={'request': request})
         if serializer.is_valid():
             product = serializer.save()
-            print("Product created with seller:", product.seller_id)
-            
-            # Handle images
+
+            # Process the uploaded images
             created_images = []
-            images_data = request.FILES.getlist('images[]')
+            images_data = request.FILES.getlist('images')
             for image in images_data:
-                try:
-                    product_image = ProductImage.objects.create(
-                        product=product,
-                        image=image
-                    )
-                    created_images.append({
-                        'id': product_image.id,
-                        'url': product_image.image.url
-                    })
-                except Exception as img_error:
-                    print(f"Error processing image: {str(img_error)}")
-                    continue
-            
-            # Add images to the response
+                # Compress the image if necessary
+                compressed_image = compress_image(image)
+                product_image = ProductImage.objects.create(product=product, image=compressed_image)
+                created_images.append({
+                    'id': product_image.id,
+                    'url': product_image.image.url
+                })
+
+            # Prepare the response data
             response_data = serializer.data
             response_data['images'] = created_images
-            return Response(response_data, status=status.HTTP_201_CREATED)
-        
-        print("Serializer errors:", serializer.errors)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response(response_data, status=status.HTTP_201_CREATED)  # Return the full response
+
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
     except Exception as e:
-        stack_trace = traceback.format_exc()
-        print("Error in create_product:")
-        print(stack_trace)
-        print("Request data:", request.data)
-        
-        error_response = {
-            'error': str(e),
-            'type': type(e).__name__,
-            'detail': stack_trace.split('\n'),
-            'location': 'create_product endpoint'
-        }
-        
-        return Response(error_response, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+@api_view(['GET'])
+@permission_classes([IsVintedAuthenticated])
+def get_conditions(request):
+    conditions = Condition.objects.all()
+    serializer = ConditionSerializer(conditions, many=True)
+    return Response(serializer.data)
