@@ -153,3 +153,15 @@ class Payment(models.Model):
         indexes = [
             models.Index(fields=['payment_status', 'payment_date']),
         ]
+
+class Condition(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    display_name = models.CharField(max_length=50)
+    description = models.TextField(blank=True, null=True)
+    order = models.IntegerField(default=0)  # For sorting conditions
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return self.display_name

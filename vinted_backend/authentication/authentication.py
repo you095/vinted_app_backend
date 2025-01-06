@@ -22,19 +22,25 @@ class IsVintedAuthenticated(permissions.BasePermission):
     def has_permission(self, request, view):
         auth = KeycloakJWTAuthentication()
         try:
+            print("Checking permission...")  # Debug print
             result = auth.authenticate(request)
             if result is None:
+                print("Authentication result is None")  # Debug print
                 return False
-            request.user, request.auth = result
+            user, auth_token = result
+            request.user = user
+            request.auth = auth_token
+            print(f"Permission granted for user: {user.email}")  # Debug print
             return True
         except Exception as e:
-            print(f"Permission Error: {str(e)}")
+            print(f"Permission Error: {str(e)}")  # Debug print
             return False
     
 class KeycloakJWTAuthentication(authentication.BaseAuthentication):
     def authenticate(self, request):
         auth_header = request.headers.get('Authorization')
         print("Attempting authentication...")  # Debug print
+        print("Headers:", request.headers)  # Add this debug line
         
         if not auth_header:
             print("No auth header found")  # Debug print
@@ -45,14 +51,14 @@ class KeycloakJWTAuthentication(authentication.BaseAuthentication):
             auth_parts = auth_header.split()
             if auth_parts[0].lower() != 'bearer' or len(auth_parts) != 2:
                 print("Invalid token format")  # Debug print
-                raise AuthenticationFailed('Invalid token header')
+                return None  # Changed from raise to return None
             token = auth_parts[1]
             
             # Get the public key
             public_key = get_public_key()
             if not public_key:
                 print("No public key found")  # Debug print
-                raise AuthenticationFailed('Could not fetch public key')
+                return None  # Changed from raise to return None
             print("Public key retrieved")  # Debug print
             
             # Verify the token
@@ -71,7 +77,8 @@ class KeycloakJWTAuthentication(authentication.BaseAuthentication):
             # Get user from token
             email = decoded_token.get('email')
             if not email:
-                raise AuthenticationFailed('No email in token')
+                print("No email in token")
+                return None
                 
             try:
                 user = User.objects.get(email=email)
@@ -79,14 +86,22 @@ class KeycloakJWTAuthentication(authentication.BaseAuthentication):
                 return (user, decoded_token)
             except User.DoesNotExist:
                 print(f"User not found for email: {email}")
-                return None
+                # Create user if they don't exist
+                user = User.objects.create(
+                    username=email,
+                    email=email,
+                    first_name=decoded_token.get('given_name', ''),
+                    last_name=decoded_token.get('family_name', ''),
+                    is_active=True
+                )
+                return (user, decoded_token)
 
         except JWTError as e:
             print(f"JWT Error: {str(e)}")  # Debug print
-            raise AuthenticationFailed(f'Invalid token: {str(e)}')
+            return None  # Changed from raise to return None
         except Exception as e:
             print(f"Authentication Error: {str(e)}")  # Debug print
-            raise AuthenticationFailed(f'Authentication failed: {str(e)}')
+            return None  # Changed from raise to return None
 
     def authenticate_header(self, request):
         return 'Bearer'
